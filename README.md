@@ -53,7 +53,7 @@ enriched at every hop until it lands as a fully-priced, fully-settled record.
                                       │
    group: sd-fraud-detection          ▼
                        ┌──────────────────────────────┐
-   BIAN SD ··········· │ Fraud Detection              │  src/fraud_detection.py
+   BIAN SD ··········· │ Fraud Detection (LightGBM)   │  src/fraud_detection.py
                        │  risk score 0-100 · signals  │
                        └──────────────┬───────────────┘
                                       │ produces
@@ -122,7 +122,7 @@ card.authorization.decided                       (+authorization block)
 └─ { ... , authorization: { decision, reason, auth_code } }
 
 card.fraud.scored                                (+fraud block)
-└─ { ... , fraud: { score, decision, signals } }
+└─ { ... , fraud: { score, decision, signals, model } }
 
 card.fee.calculated                              (+fees block)
 └─ { ... , fees: { interchange, assessment, processor,
@@ -185,6 +185,56 @@ taking a slice.
 
 > **Net merchant payout** = `gross_amount − Σ(fees)`, in the merchant's
 > settlement currency (USD / GBP / EUR / PKR / JPY depending on country).
+
+---
+
+## Fraud model (`src/fraud_detection.py` + `model_training/`)
+
+Fraud scoring is a **LightGBM binary classifier** trained on synthetic
+CardRails transactions. The trained booster lives at
+`model_training/models/fraud_model.txt` and is loaded once at SD startup. If
+the file is absent (or `lightgbm` / `numpy` aren't installed), the SD
+transparently falls back to a deterministic rule stub so the pipeline always
+runs — the fraud envelope's `model` field reads `lightgbm` or `stub`
+accordingly.
+
+| Component                            | Where                                |
+|--------------------------------------|--------------------------------------|
+| Feature extraction (40 columns)      | `src/fraud_features.py`              |
+| Booster load + stub fallback         | `src/fraud_model.py`                 |
+| SD wiring + decision thresholds      | `src/fraud_detection.py`             |
+| Synthetic dataset generator          | `model_training/build_dataset.py`    |
+| Trainer                              | `model_training/train.py`            |
+
+**Features (40)** — raw `amount`, `log_amount`, `hour_of_day`, and booleans
+for `is_cross_border` / `is_card_not_present` / `is_high_amount`, plus
+one-hots for card network, card tier, currency, issuer country, merchant
+country, MCC category, and channel.
+
+**Decision thresholds** (`src/fraud_detection.py`)
+
+| `score` (= round(probability × 100)) | Decision   |
+|--------------------------------------|------------|
+| ≥ 75                                 | `BLOCKED`  |
+| ≥ 70 and < 75                        | `REVIEW`   |
+| < 70                                 | `CLEARED`  |
+
+`BLOCKED` short-circuits Fee Pricing → Clearing → Capture (see
+[Decision interaction](#decision-interaction)).
+
+**Retrain** (the repo ships with a pre-trained model; this step is optional)
+
+```bash
+uv sync --group train
+uv run --group train python model_training/build_dataset.py --n 50000
+uv run --group train python model_training/train.py
+```
+
+The trainer rewrites `model_training/models/fraud_model.txt` in place; the
+next SD restart picks it up automatically. The latent risk function in
+`build_dataset.py` is tuned to ~3% positives, which yields a test AUC near
+0.78. Retune intercept / signal weights there if you want a different
+positive rate.
 
 ---
 
@@ -325,15 +375,21 @@ docker compose down -v         # also drop the kafka_data volume (wipes topics)
 .
 ├── README.md                    ← you are here
 ├── docker-compose.yaml          ← kafka-cluster + kafka-ui + kafka_data volume
-├── pyproject.toml               ← Python 3.14+ · confluent-kafka
+├── pyproject.toml               ← Python 3.14+ · confluent-kafka · lightgbm · numpy
 ├── scripts/
 │   ├── create-topics.sh         ← creates the 6 BIAN topics
 │   └── describe-groups.sh       ← describes the 5 pipeline consumer groups
+├── model_training/              ← offline LightGBM training kit
+│   ├── build_dataset.py         ← synthetic labeled dataset generator
+│   ├── train.py                 ← LightGBM trainer
+│   └── models/fraud_model.txt   ← trained booster (loaded by src/fraud_model.py)
 └── src/
     ├── config.py                ← bootstrap, topic names, card metadata
     ├── main.py                  ← Card Terminal (producer)
     ├── authorization.py         ← BIAN SD: Card Authorization
-    ├── fraud_detection.py       ← BIAN SD: Fraud Detection
+    ├── fraud_detection.py       ← BIAN SD: Fraud Detection (LightGBM)
+    ├── fraud_features.py        ← feature extractor (shared with trainer)
+    ├── fraud_model.py           ← booster loader + stub fallback
     ├── fee_pricing.py           ← BIAN SD: Card Fee Pricing
     ├── clearing.py              ← BIAN SD: Card Clearing
     └── tracker.py               ← BIAN SD: Capture + Merchant Settlement
@@ -346,6 +402,7 @@ docker compose down -v         # also drop the kafka_data volume (wipes topics)
 - **Apache Kafka** via [`lensesio/fast-data-dev`](https://hub.docker.com/r/lensesio/fast-data-dev) — single-container dev cluster (broker + Zookeeper + Schema Registry + Connect + Lenses UI)
 - **[provectuslabs/kafka-ui](https://hub.docker.com/r/provectuslabs/kafka-ui)** — web UI for topic/group inspection
 - **Python 3.14+** with **`confluent-kafka`** (librdkafka bindings)
+- **LightGBM** for fraud scoring — in-process inference; offline training kit in `model_training/`
 - **BIAN v12+ Service Domain taxonomy** — Card Authorization, Fraud/AML, Card Fee Pricing, Card Clearing, Card Transaction, Merchant Services
 
 ---
