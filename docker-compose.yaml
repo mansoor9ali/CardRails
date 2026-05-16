@@ -1,3 +1,5 @@
+name: card-rails
+
 services:
   kafka-cluster:
     image: lensesio/fast-data-dev
@@ -28,6 +30,20 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-cluster:9092
     ports:
       - "7000:8080"
+    depends_on:
+      - kafka-cluster
+
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    container_name: kafdrop
+    networks:
+      - kafka-net
+    environment:
+      KAFKA_BROKERCONNECT: kafka-cluster:9092
+      JVM_OPTS: "-Xms32M -Xmx64M"
+      SERVER_SERVLET_CONTEXTPATH: "/"
+    ports:
+      - "9000:9000"
     depends_on:
       - kafka-cluster
 

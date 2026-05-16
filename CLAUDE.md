@@ -58,7 +58,7 @@ docker compose down
 docker compose down -v
 ```
 
-Web UIs: kafka-ui at http://localhost:7000, Lenses fast-data-dev at http://localhost:3030.
+Web UIs: kafka-ui at http://localhost:7000, Kafdrop at http://localhost:9000, Lenses fast-data-dev at http://localhost:3030.
 
 ## Python environment
 

@@ -21,7 +21,7 @@ enriched at every hop until it lands as a fully-priced, fully-settled record.
 | Enrichment            | **Each SD appends its block** to the event payload        |
 | Horizontal scale      | **Each SD has its own consumer group** — add instances    |
 | Replay & audit        | **Kafka retains topics** — backed by `kafka_data` volume  |
-| Local ops UI          | **kafka-ui** on :7000, **Lenses fast-data-dev** on :3030  |
+| Local ops UI          | **kafka-ui** on :7000, **Kafdrop** on :9000, **Lenses fast-data-dev** on :3030 |
 
 ---
 
@@ -200,12 +200,15 @@ Managed by `docker-compose.yaml`:
 │   │ lensesio/fast-data-dev       │◄───────│ provectuslabs/kafka-ui     │   │
 │   │  • Zookeeper       :2181     │ :9092  │  DYNAMIC_CONFIG_ENABLED    │   │
 │   │  • Kafka broker    :9092     │        │  bootstrap=kafka-cluster   │   │
-│   │  • Schema Registry :8081     │        │                            │   │
-│   │  • REST Proxy      :8082     │        │   exposed: :7000 → :8080   │   │
-│   │  • Connect         :8083     │        └────────────────────────────┘   │
-│   │  • Lenses UI       :3030     │                                         │
-│   │  ADV_HOST=kafka-cluster      │                                         │
-│   └──────────────┬───────────────┘                                         │
+│   │  • Schema Registry :8081     │        │   exposed: :7000 → :8080   │   │
+│   │  • REST Proxy      :8082     │        └────────────────────────────┘   │
+│   │  • Connect         :8083     │        ┌────────────────────────────┐   │
+│   │  • Lenses UI       :3030     │◄───────│ kafdrop                    │   │
+│   │  ADV_HOST=kafka-cluster      │ :9092  │ obsidiandynamics/kafdrop   │   │
+│   └──────────────┬───────────────┘        │  KAFKA_BROKERCONNECT=      │   │
+│                  │                        │    kafka-cluster:9092      │   │
+│                  │                        │   exposed: :9000 → :9000   │   │
+│                  │                        └────────────────────────────┘   │
 │                  │ /data (broker logs persisted)                            │
 └──────────────────┼─────────────────────────────────────────────────────────┘
                    ▼
@@ -223,6 +226,7 @@ Managed by `docker-compose.yaml`:
 | 8083      | 8083         | Kafka Connect                                 |
 | 3030      | 3030         | Lenses fast-data-dev UI                       |
 | 7000      | 8080         | kafka-ui (Provectus)                          |
+| 9000      | 9000         | Kafdrop (Obsidian Dynamics)                   |
 
 ---
 
@@ -304,6 +308,7 @@ docker exec kafka-cluster kafka-consumer-groups \
 
 ### Web UIs
 - **kafka-ui** → http://localhost:7000  (topic browser, message viewer, consumer-group monitor)
+- **Kafdrop** → http://localhost:9000  (lightweight topic / partition / message inspector)
 - **Lenses fast-data-dev** → http://localhost:3030  (built-in cluster dashboard)
 
 ### Tear down
