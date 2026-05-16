@@ -1,0 +1,41 @@
+services:
+  kafka-cluster:
+    image: lensesio/fast-data-dev
+    container_name: kafka-cluster
+    hostname: kafka-cluster
+    networks:
+      - kafka-net
+    environment:
+      ADV_HOST: kafka-cluster
+    ports:
+      - "2181:2181"   # Zookeeper
+      - "9092:9092"   # Kafka broker
+      - "8081:8081"   # Schema Registry
+      - "8082:8082"   # Kafka REST Proxy
+      - "8083:8083"   # Kafka Connect
+      - "3030:3030"   # Lenses / fast-data-dev UI
+    volumes:
+      - kafka_data:/data
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui
+    container_name: kafka-ui
+    networks:
+      - kafka-net
+    environment:
+      DYNAMIC_CONFIG_ENABLED: "true"
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-cluster:9092
+    ports:
+      - "7000:8080"
+    depends_on:
+      - kafka-cluster
+
+networks:
+  kafka-net:
+    name: kafka-net
+    external: true
+
+volumes:
+  kafka_data:
+    name: kafka_data
