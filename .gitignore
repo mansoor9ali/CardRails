@@ -32,3 +32,6 @@ mynotes.txt
 
 # Logs
 *.log
+
+# Generated training data (regenerable via model_training/build_dataset.py)
+model_training/data/

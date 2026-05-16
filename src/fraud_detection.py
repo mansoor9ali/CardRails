@@ -1,14 +1,17 @@
 """BIAN Service Domain: Fraud Detection (Fraud / AML).
 
-Scores authorized transactions for fraud risk. Operates independently of
-authorization: an approved transaction can still be BLOCKED or sent to
-REVIEW based on velocity, geography, channel and amount signals.
+Scores authorized transactions for fraud risk using a LightGBM model. The
+heavy lifting lives in `fraud_model.py` (which falls back to a deterministic
+stub when the model has not been trained yet) and `fraud_features.py`
+(feature engineering shared with the trainer).
+
+Operates independently of authorization: an approved transaction can still be
+BLOCKED or sent to REVIEW based on the model's risk probability.
 
 Consumes: card.authorization.decided
 Produces: card.fraud.scored
 """
 import json
-import random
 
 from confluent_kafka import Consumer, Producer
 
@@ -17,38 +20,28 @@ from config import (
     TOPIC_AUTHORIZATION_DECIDED,
     TOPIC_FRAUD_SCORED,
 )
+from fraud_model import score as ml_score
 
 GROUP_ID = "sd-fraud-detection"
 REVIEW_THRESHOLD = 70
-BLOCK_THRESHOLD = 90
+BLOCK_THRESHOLD = 75
 
 
 def score_transaction(txn: dict) -> dict:
-    signals = []
-    score = random.randint(0, 25)  # baseline noise
-
-    if txn["amount"] > 1000:
-        score += 25
-        signals.append("HIGH_AMOUNT")
-    if txn["card"]["issuer_country"] != txn["merchant"]["country"]:
-        score += 20
-        signals.append("CROSS_BORDER")
-    if txn["channel"] in ("ECOMMERCE", "MOTO"):
-        score += 10
-        signals.append("CARD_NOT_PRESENT")
-    if txn["merchant"]["mcc_category"] == "AIRLINE" and txn["amount"] > 500:
-        score += 15
-        signals.append("AIRLINE_HIGH_TICKET")
-
-    score = min(score, 100)
+    probability, signals, using_ml = ml_score(txn)
+    score = min(int(round(probability * 100)), 100)
     if score >= BLOCK_THRESHOLD:
         decision = "BLOCKED"
     elif score >= REVIEW_THRESHOLD:
         decision = "REVIEW"
     else:
         decision = "CLEARED"
-
-    return {"score": score, "decision": decision, "signals": signals}
+    return {
+        "score": score,
+        "decision": decision,
+        "signals": signals,
+        "model": "lightgbm" if using_ml else "stub",
+    }
 
 
 def main():
@@ -76,6 +69,7 @@ def main():
             icon = {"CLEARED": "🟢", "REVIEW": "🟡", "BLOCKED": "🔴"}[txn["fraud"]["decision"]]
             print(f"{icon} FRAUD {txn['transaction_id'][:8]} "
                   f"score={txn['fraud']['score']:3d} {txn['fraud']['decision']:7s} "
+                  f"model={txn['fraud']['model']:8s} "
                   f"signals={txn['fraud']['signals']}")
 
             producer.produce(
