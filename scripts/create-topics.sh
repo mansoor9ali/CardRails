@@ -1,13 +1,34 @@
 #!/usr/bin/env bash
 # Create all Kafka topics for the BIAN card-transaction pipeline.
 #
+# Auto-detects which broker container is running:
+#   - docker-compose.yaml            → container "kafka-cluster"
+#   - docker-compose-withKraft.yaml  → container "kafka"
+# Override with CONTAINER=... if you have a non-standard setup.
+#
 # Usage:
-#   ./scripts/create-topics.sh                  # uses defaults below
-#   CONTAINER=kafka-cluster ./scripts/create-topics.sh
+#   ./scripts/create-topics.sh                  # auto-detect container
+#   CONTAINER=kafka ./scripts/create-topics.sh  # force a specific one
 #   PARTITIONS=6 REPLICATION=1 ./scripts/create-topics.sh
 set -euo pipefail
 
-CONTAINER="${CONTAINER:-kafka-cluster}"
+container_running() {
+  [[ -n "$(docker ps --quiet --filter "name=^${1}$" 2>/dev/null)" ]]
+}
+
+if [[ -z "${CONTAINER:-}" ]]; then
+  if container_running kafka-cluster; then
+    CONTAINER=kafka-cluster
+  elif container_running kafka; then
+    CONTAINER=kafka
+  else
+    echo "❌ No Kafka broker container found (looked for 'kafka-cluster' and 'kafka')." >&2
+    echo "   Start one with 'docker compose up -d' or 'docker compose -f docker-compose-withKraft.yaml up -d'," >&2
+    echo "   or set CONTAINER=<name> explicitly." >&2
+    exit 1
+  fi
+fi
+
 BOOTSTRAP="${BOOTSTRAP:-localhost:9092}"
 PARTITIONS="${PARTITIONS:-3}"
 REPLICATION="${REPLICATION:-1}"

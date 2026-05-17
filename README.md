@@ -240,7 +240,20 @@ positive rate.
 
 ## Infrastructure
 
-Managed by `docker-compose.yaml`:
+Two interchangeable broker stacks are provided — pick one:
+
+| Compose file                      | Broker image                       | Mode   | Extras                                           |
+|-----------------------------------|------------------------------------|--------|--------------------------------------------------|
+| `docker-compose.yaml` (default)   | `lensesio/fast-data-dev`           | ZK     | Schema Registry, REST Proxy, Connect, Lenses UI  |
+| `docker-compose-withKraft.yaml`   | `confluentinc/cp-kafka:8.1.3`      | KRaft  | leaner — broker-only, no Zookeeper               |
+
+Both wire up the same `kafka-net` external network and ship the same `kafka-ui`
+(:7000) and `kafdrop` (:9000) sidecars, so the rest of the docs apply to either
+stack. The default `docker-compose.yaml` is described below; the KRaft variant
+uses container name **`kafka`** instead of `kafka-cluster` and exposes a single
+`localhost:9092` listener (no `:2181/:8081/:8082/:8083/:3030`).
+
+Default stack (`docker-compose.yaml`):
 
 ```
 ┌──────────────────────────── kafka-net (bridge) ────────────────────────────┐
@@ -288,19 +301,29 @@ Managed by `docker-compose.yaml`:
 - `pip install confluent-kafka` (or `uv sync` if using uv)
 
 ### 1. Bring up the broker stack
+
+The `kafka-net` network is declared `external: true`, so create it once first:
 ```bash
-docker compose up -d
-# Wait ~30-45s for Kafka to fully boot inside fast-data-dev
+docker network create kafka-net   # only needed the first time
 ```
+
+Then bring up **one** of the two stacks:
+```bash
+docker compose up -d                                  # Lenses fast-data-dev (default)
+# or
+docker compose -f docker-compose-withKraft.yaml up -d # Confluent Kafka in KRaft mode
+```
+Wait ~30-45s for Kafka to fully boot.
 
 ### 2. Create the 6 BIAN topics
 ```bash
 ./scripts/create-topics.sh
 ```
-Optional overrides:
+The script auto-detects which broker container is running (`kafka-cluster` for
+the default stack, `kafka` for the KRaft stack). Optional overrides:
 ```bash
 PARTITIONS=6 REPLICATION=1 ./scripts/create-topics.sh
-CONTAINER=kafka-cluster BOOTSTRAP=localhost:9092 ./scripts/create-topics.sh
+CONTAINER=kafka ./scripts/create-topics.sh            # force a specific container
 ```
 
 ### 3. Run the pipeline
@@ -341,6 +364,10 @@ docker exec kafka-cluster kafka-consumer-groups \
   --describe --group sd-card-authorization
 ```
 
+> The `docker exec` examples below assume the default stack (container
+> `kafka-cluster`). On the KRaft stack swap in `kafka`:
+> `docker exec kafka kafka-console-consumer --bootstrap-server localhost:9092 ...`
+
 ### Tail a topic
 ```bash
 docker exec kafka-cluster kafka-console-consumer \
@@ -366,6 +393,10 @@ docker exec kafka-cluster kafka-consumer-groups \
 docker compose down            # stop & remove containers + network
 docker compose down -v         # also drop the kafka_data volume (wipes topics)
 ```
+For the KRaft stack, point at its compose file (its volume is `kafka_kraft`):
+```bash
+docker compose -f docker-compose-withKraft.yaml down -v
+```
 
 ---
 
@@ -374,7 +405,8 @@ docker compose down -v         # also drop the kafka_data volume (wipes topics)
 ```
 .
 ├── README.md                    ← you are here
-├── docker-compose.yaml          ← kafka-cluster + kafka-ui + kafka_data volume
+├── docker-compose.yaml          ← default: kafka-cluster (Lenses) + kafka-ui + kafdrop
+├── docker-compose-withKraft.yaml← alternative: confluentinc/cp-kafka in KRaft mode + UIs
 ├── pyproject.toml               ← Python 3.14+ · confluent-kafka · lightgbm · numpy
 ├── scripts/
 │   ├── create-topics.sh         ← creates the 6 BIAN topics
@@ -399,8 +431,8 @@ docker compose down -v         # also drop the kafka_data volume (wipes topics)
 
 ## Tech stack
 
-- **Apache Kafka** via [`lensesio/fast-data-dev`](https://hub.docker.com/r/lensesio/fast-data-dev) — single-container dev cluster (broker + Zookeeper + Schema Registry + Connect + Lenses UI)
-- **[provectuslabs/kafka-ui](https://hub.docker.com/r/provectuslabs/kafka-ui)** — web UI for topic/group inspection
+- **Apache Kafka** via [`lensesio/fast-data-dev`](https://hub.docker.com/r/lensesio/fast-data-dev) — single-container dev cluster (broker + Zookeeper + Schema Registry + Connect + Lenses UI). A leaner [`confluentinc/cp-kafka`](https://hub.docker.com/r/confluentinc/cp-kafka) KRaft-mode alternative is available via `docker-compose-withKraft.yaml`.
+- **[provectuslabs/kafka-ui](https://hub.docker.com/r/provectuslabs/kafka-ui)** + **[obsidiandynamics/kafdrop](https://hub.docker.com/r/obsidiandynamics/kafdrop)** — web UIs for topic/group inspection
 - **Python 3.14+** with **`confluent-kafka`** (librdkafka bindings)
 - **LightGBM** for fraud scoring — in-process inference; offline training kit in `model_training/`
 - **BIAN v12+ Service Domain taxonomy** — Card Authorization, Fraud/AML, Card Fee Pricing, Card Clearing, Card Transaction, Merchant Services
